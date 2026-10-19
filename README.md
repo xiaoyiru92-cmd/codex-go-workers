@@ -49,6 +49,22 @@ python3 "$PI" resume pi_JOB_ID --prompt '继续处理剩余工作'
 
 有独立工作时在工作边界用 `inbox` 补查结果。`wait` 保留用于短诊断，不作为默认编排方式。结束回合前确认待办任务已启用通知并绑定本聊天；回报后的 `ack` 防止重复处理。已入队不代表已读，仍不声称宿主支持运行中的即时打断。
 
+### 完成通知与提前验收
+
+**主控可以主动取回结果，也可以由完成通知唤醒；提前验收后，尚未投递的通知会被撤回。** worker 完成时默认提交 `queue` 通知，不需要猜测主控是否正在监听。主控仍在工作时可通过 `inbox` 取回结果，检查后用 `ack` 记录验收；只有“读到了结果”还不算已处理。
+
+|实际时序|处理方式|
+|---|---|
+|主控已验收，通知尚未提交|跳过提交，不再产生通知。|
+|通知已排队，主控在投递前验收|先保存验收，再撤回这一次运行的待投递消息。|
+|主控尚未验收|保留通知；主控结束当前回合后，由通知唤醒后续回合继续验收。|
+
+撤回通过 Codex 本地 app-server 的队列接口完成：先在来源聊天中匹配精确的运行标识，再删除对应待投递消息。不会删除聊天历史或其他任务的消息，也不增加轮询守护进程或人为延时。所用 CLI 需支持 `app-server --stdio` 及 `thread/queue/list`、`thread/queue/delete`。
+
+`ack` 返回的 `notification.retraction.status` 区分 `not_submitted`（未提交）、`removed`（已撤回）、`not_pending`（已不在队列，可能已经投递）与 `failed`（撤回失败，验收仍已保存）。失败后可重复 `ack` 或运行 `recover` 重试撤回，不会重新派工。若投递抢先发生，回报处理器仍先检查验收记录，避免重复执行；因此不承诺绝对无重复投递。
+
+**两条完整路径已在真实 Codex 聊天验证：**提前验收的通知成功撤回、未进入后续聊天；未提前验收的通知在主控让出回合后正常唤醒并完成验收。见 [验证记录](VERIFICATION.md#completion-notification-retraction-2026-10-19)；[USAGE.md](USAGE.md#persistent-state) 说明状态与重试细节。
+
 ## 角色和运行结构
 
 角色包含 fixer、designer、explorer、librarian、reviewer、quick。角色绑定工具与提示词，模型由用户配置。只读角色不能用 `--tools` 增加写入或 shell 能力。不同角色可配置不同 API 和模型别名。
@@ -64,7 +80,7 @@ Codex 主控 → Python 启动器/监督进程 → Pi SDK worker → 用户选�
 ## 检查与边界
 
 ```bash
-python3 -m unittest -v test_offline.py test_setup.py test_lifecycle.py test_handoff.py
+python3 -m unittest -v test_offline.py test_setup.py test_lifecycle.py test_handoff.py test_notifications.py
 node --test test_connection.mjs
 npm ci --ignore-scripts --no-audit --no-fund
 python3 -m unittest -v test_compatible_integration.py
