@@ -1,0 +1,14 @@
+{
+  "name": "codex-go-workers",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.3.0"
+  },
+  "version": "0.1.0",
+  "description": "Codex-only Pi workers using OpenCode Go",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  }
+}

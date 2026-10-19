@@ -1,0 +1,10 @@
+node_modules/
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.*
+work/
+outputs/
+.codex-pi/
+*.log
