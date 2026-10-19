@@ -118,6 +118,53 @@ def codex_cli():
     return command
 
 
+def accepted(run, request):
+    record = read(run / 'acceptance.json')
+    if record is not None:
+        if not isinstance(record, dict) or record.get('verdict') not in {'accepted', 'rejected'}:
+            raise ValueError('Invalid acceptance record')
+        if record.get('threadId') and record['threadId'] != request.get('threadId'):
+            raise ValueError('Acceptance belongs to another Codex chat')
+    return record
+
+
+def finish_notification(run, request, notification):
+    """Caller holds notification.lock, serializing submission and acceptance."""
+    prior = notification.get('status', 'pending')
+    notification.update(status='acknowledged', acknowledgedAt=now())
+    if prior in {'pending', 'disabled'}:
+        notification['retraction'] = {'status': 'not_submitted'}
+    else:
+        previous = notification.get('retraction', {}).get('status')
+        if previous not in {'removed', 'not_pending', 'not_submitted'}:
+            # Persist acceptance/ack first. A crash during cleanup is retryable
+            # via ack/recover and must never make this run eligible for resending.
+            write(run / 'notification.json', notification)
+            try:
+                from queue_control import retract
+                notification['retraction'] = retract(codex_cli(), run, request)
+            except Exception as error:
+                notification['retraction'] = {'status': 'failed', 'error': type(error).__name__,
+                    'actionRequired': 'Acceptance saved; retry ack or recover to retract the pending notification.'}
+    write(run / 'notification.json', notification)
+    return notification
+
+
+def acknowledge(run, verdict, note, thread):
+    request = read(run / 'request.json')
+    if thread and request['threadId'] and thread != request['threadId']:
+        raise ValueError('This notification belongs to another Codex chat')
+    if read(run / 'state.json')['status'] not in TERMINAL:
+        raise ValueError('Cannot accept an active run')
+    if verdict not in {'accepted', 'rejected'}:
+        raise ValueError('Invalid acceptance verdict')
+    with lock(run / 'notification.lock'):
+        result = {'verdict': verdict, 'note': note, 'at': now(), 'threadId': thread}
+        write(run / 'acceptance.json', result)
+        notification = finish_notification(run, request, read(run / 'notification.json', {}))
+        return {**result, 'notification': notification}
+
+
 def notify(run, retry=False):
     request = read(run / 'request.json')
     state = read(run / 'state.json')
@@ -125,6 +172,8 @@ def notify(run, retry=False):
         raise ValueError('Worker has not finished')
     with lock(run / 'notification.lock'):
         notification = read(run / 'notification.json', {'status': 'pending'})
+        if accepted(run, request) is not None:
+            return finish_notification(run, request, notification)
         if not request['notify']:
             notification = {'status': 'disabled'}
             write(run / 'notification.json', notification)
@@ -151,7 +200,7 @@ def notify(run, retry=False):
         write(run / 'notification.json', notification)
         try:
             queued = subprocess.run([codex_cli(), 'queue', '--thread', request['threadId'], '--message', prompt],
-                                    capture_output=True, text=True, timeout=40, cwd=request['cwd'])
+                                    capture_output=True, text=True, timeout=40, cwd=run)
             notification.update(returnedAt=now(), exitCode=queued.returncode)
             if queued.returncode == 0:
                 match = re.search(r'Queued message ([0-9a-f-]+)', queued.stdout)
@@ -501,18 +550,7 @@ def main():
         elif args.command == 'notify':
             result = notify(run, args.retry)
         elif args.command == 'ack':
-            request = read(run / 'request.json')
-            thread = os.environ.get('CODEX_THREAD_ID')
-            if thread and request['threadId'] and thread != request['threadId']:
-                raise ValueError('This notification belongs to another Codex chat')
-            if read(run / 'state.json')['status'] not in TERMINAL:
-                raise ValueError('Cannot accept an active run')
-            with lock(run / 'notification.lock'):
-                result = {'verdict': args.verdict, 'note': args.note, 'at': now(), 'threadId': thread}
-                write(run / 'acceptance.json', result)
-                notification = read(run / 'notification.json', {})
-                notification.update(status='acknowledged', acknowledgedAt=now())
-                write(run / 'notification.json', notification)
+            result = acknowledge(run, args.verdict, args.note, os.environ.get('CODEX_THREAD_ID'))
     print(json.dumps(result, ensure_ascii=False))
 
 

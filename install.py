@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 
 HERE = Path(__file__).resolve().parent
-RUNTIME = ('pi.py', 'presets.py', 'setup_config.py', 'handoff.py', 'worker.mjs', 'connection.mjs', 'opencode.mjs', 'agents.json',
+RUNTIME = ('pi.py', 'presets.py', 'setup_config.py', 'handoff.py', 'queue_control.py', 'worker.mjs', 'connection.mjs', 'opencode.mjs', 'agents.json',
            'package.json', 'package-lock.json')
 
 

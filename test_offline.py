@@ -41,7 +41,7 @@ class OfflineChecks(unittest.TestCase):
             command = [sys.executable, str(HERE / 'install.py'), '--target', str(target), '--skip-deps']
             subprocess.run(command, check=True, capture_output=True)
             for name in ['SKILL.md', 'scripts/pi.py', 'agents/openai.yaml', 'runtime/pi.py',
-                         'runtime/presets.py', 'runtime/agents.json', 'runtime/package-lock.json']:
+                         'runtime/presets.py', 'runtime/queue_control.py', 'runtime/agents.json', 'runtime/package-lock.json']:
                 self.assertTrue((target / name).is_file(), name)
             self.assertFalse((target / 'runtime/node_modules').exists())
             before = (target / 'runtime/agents.json').read_bytes()

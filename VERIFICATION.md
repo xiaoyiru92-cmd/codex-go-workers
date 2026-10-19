@@ -92,3 +92,44 @@ Five lifecycle tests and the expanded compatible integration test passed.
 Three real read-only Go audit workers completed in parallel (two Muse, one
 DeepSeek). Root accepted the verified source/install drift finding and rejected
 unreproduced claims; model completion alone is not audit acceptance.
+
+## Completion notification retraction (2026-10-19)
+
+Two real Muse reviewer runs exercised both paths in the originating Codex chat:
+
+- **Accepted while the parent was still active:** run 1 completed and submitted
+  one notification. The live queue listed its ID, which matched the CLI receipt.
+  The updated `ack` saved acceptance and returned `retraction.status=removed`.
+  A second live queue read found no matching message. After the parent yielded,
+  native chat-history inspection showed no run-1 callback turn.
+- **Not accepted in advance:** run 2 used the updated installed runtime. The
+  parent ended its turn at 16:20:04 Asia/Taipei. The worker completed at 16:20:07
+  and submitted one notification; a new parent turn started at 16:20:08 with
+  that exact run-2 callback as its input. There was no intervening human message.
+  `acceptance.json` was absent on receipt. The message was already consumed from
+  the queue, so subsequent acceptance correctly reported `not_pending`, not
+  `removed`.
+
+These were real Go workers and real Codex queue list/delete/delivery operations,
+not mocked wake-ups. Local audit artifacts remain in ignored `work/` and the
+run store; no credentials or chat transcript are published here. The installed
+notification functions and queue transport were checked against this source;
+unrelated newer installed lifecycle changes were preserved, not overwritten.
+
+Ten new offline notification tests cover acceptance before submission, normal
+single submission, concurrent submit/ack ordering, uncertain/lost submission
+receipts, retry after cleanup failure, cross-chat rejection, exact marker
+ownership, pagination, consumed messages, and bounded subprocess transport.
+The related test selection passed 31 tests. Full Python discovery passed 37
+tests and skipped one unchanged compatible-API integration test because this
+checkout lacks npm dependencies; no new external compatible-provider test is
+claimed. One initial EOF fixture failed because its 0.2-second deadline expired
+during interpreter startup; only that fixture's startup allowance was changed
+to two seconds. The transport timeout behavior itself was unchanged.
+
+The code review found no blocking notification defect. Its two lifecycle
+regression claims compared the checkout with newer installed files; the
+supervisor/recovery code was unchanged by this diff, and those installed fixes
+were retained. This is a bounded live verification, not an exactly-once promise:
+delivery can win the race with acceptance, and unavailable queue APIs leave a
+reported retryable cleanup failure. Already delivered history is never deleted.

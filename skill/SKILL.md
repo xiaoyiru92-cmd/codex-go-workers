@@ -82,3 +82,5 @@ python3 ~/.codex/skills/codex-pi-subagents/scripts/pi.py ack pi_JOB_ID --run 1 -
 失败用 `rejected`，并区分模型失败、工具失败、超时、取消与通知失败。worker 说成功不等于主控验收；queue 入队也不等于已经处理；运行中的主控不能靠排队消息自动引导；等待依赖时必须主动结束回合，空闲后由 queue 唤醒。验收后有独立待办时及时补位，直到原任务完成。
 
 主控直接持有 job ID，不依赖中间代理等待。`recover` 保留会话和部分产物，不自动重放工具；先检查部分工作，再决定续接。通知处于 `uncertain/submitting` 时先核对聊天，不自动重发。OpenCode 失联、登录过期或供应商报错时报告边界，不修改其全局配置、不盲目换账户或模型。
+
+提前验收时，`ack` 会先保存验收，再撤回尚未进入聊天的本次运行通知；若尚未提交通知，则直接跳过提交。未验收结果仍保留 queue 唤醒。查看返回的 `notification.retraction`：`removed` 才确认已撤回，`not_submitted` 表示未提交；`not_pending` 可能已经投递，不能称为成功拦截。`failed` 时验收仍有效，可重复 `ack` 或运行 `recover` 重试撤回。只按当前 run 的精确标识删除待投递消息，不删除历史或其他通知；若投递先于验收，仍按上面的验收记录去重。

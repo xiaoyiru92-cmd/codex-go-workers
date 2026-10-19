@@ -136,6 +136,24 @@ Use `rejected` if the deliverable does not pass. An already accepted notificatio
 must not cause repeated task execution. Acknowledging the run is separate from
 the worker's completion and the queue's submission.
 
+If Codex accepts a result through `inbox` before its completion message is
+delivered, `ack` retracts that run's pending message through the local Codex
+app-server queue API. Acknowledgment before submission suppresses submission
+entirely. Unaccepted runs still queue a wake-up normally; no timer or polling
+daemon is added. Cleanup lists the source chat's queue and matches the exact
+run marker before deleting, including when a failed submission lost its receipt.
+It never deletes chat history or unrelated queued messages.
+
+Acceptance is saved before cleanup. `ack` returns a `notification.retraction`
+status: `not_submitted`, `removed`, `not_pending`, or `failed`. `not_pending`
+does not prove suppression: the message may already have been consumed. If
+cleanup fails, acceptance remains valid; repeat `ack` or use `recover` to retry
+cleanup without resubmitting. Delivery racing ahead of acceptance can still
+produce a late notification, whose handler must check `acceptance.json` first.
+Queue cleanup requires a local CLI supporting `app-server --stdio` and the
+experimental `thread/queue/list` and `thread/queue/delete` methods. An unavailable
+API is reported as failed cleanup, never as successful suppression.
+
 `notify pi_JOB_ID --run 1` submits a pending notification without rerunning Pi.
 Already queued or acknowledged notifications are not submitted again. If a queue
 command times out, fails ambiguously, or the supervisor disappears during
