@@ -24,7 +24,7 @@ def save():
 
 
 def cli(*args, config=None):
-    command = [sys.executable, str(HERE / 'pi.py'), '--state-dir', str(STORE)]
+    command = [sys.executable, str(HERE / 'pi.py'), '--config', str(HERE / 'examples/opencode-go.json'), '--state-dir', str(STORE)]
     if config:
         command += ['--config', str(config)]
     response = subprocess.run(command + list(map(str, args)), capture_output=True, text=True, timeout=45)
@@ -58,7 +58,7 @@ def transcript(result):
 
 
 try:
-    config = load_config(HERE / 'agents.json')
+    config = load_config(HERE / 'examples/opencode-go.json')
     assert resolve(config, 'explorer')['model'] == 'deepseek-v4.1-flash'
     assert resolve(config, model_name='muse-spark-1.3-contributor')['model'] == 'muse-spark-1.3-contributor'
     for agent, tools in [('explorer', 'bash'), ('reviewer', 'write')]:

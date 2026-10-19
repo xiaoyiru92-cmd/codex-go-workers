@@ -1,19 +1,20 @@
 # Local Codex–Pi bridge
 
 A small local bridge for Codex Desktop to delegate work to Pi. Codex remains the
-orchestrator; Pi uses the active OpenCode v2 login and Go model connection. Each
+orchestrator; Pi uses the API and model explicitly selected by the user (OpenAI-compatible Chat Completions or OpenCode Go). Each
 job has one plain process supervisor and one Pi SDK worker. There is no resident
 service and no extra model controller.
 
 ## Current setup
 
 - macOS, Python 3, Node.js 22 or later.
-- OpenCode v2 Desktop running locally, with an active OpenCode login and Go models.
+- Only for Go: OpenCode v2 Desktop running locally, with an active OpenCode login and Go models.
+- Run `python3 pi.py setup` before first use; new installations have no selected provider or model.
 - Codex Desktop running and signed in, with a bundled CLI that supports `queue`.
 - Install dependencies in this directory with `npm ci --ignore-scripts --no-audit --no-fund`.
 - Pi SDK is pinned to `@earendil-works/pi-coding-agent@1.3.0`.
 
-The bridge discovers the local server owned by OpenCode Desktop, exports only the
+When Go is selected, the bridge discovers the local server owned by OpenCode Desktop, exports only the
 OpenCode integration into process memory, selects its active OAuth login, and
 reads the enabled model's endpoint and workspace header from that same server.
 It does not use the legacy `auth.json` key or copy credentials to Pi storage.
@@ -28,7 +29,10 @@ directory is the shell's working directory.
 
 ```bash
 python3 pi.py start --cwd /absolute/project --prompt-file /absolute/task.txt
+python3 pi.py setup
 python3 pi.py agents
+python3 pi.py inbox
+python3 pi.py wait pi_JOB_ID --timeout 30
 python3 pi.py models
 python3 pi.py start --agent explorer --cwd /absolute/project --prompt-file /absolute/search.txt
 python3 pi.py start --agent fixer --model deepseek --cwd /absolute/other/project --prompt-file /absolute/task.txt
@@ -45,16 +49,21 @@ python3 pi.py recover
 Use the actual `pi_` job ID printed by `start`. Notifications bind to the calling
 chat's `CODEX_THREAD_ID`; outside Codex, supply `--thread UUID` or `--no-notify`.
 The default agent is `fixer`. `agents.json` defines role prompts, tool sets,
-model aliases, and the default concurrency limit. `muse` selects
-`opencode-go/muse-spark-1.3-contributor`; `deepseek` selects
-`opencode-go/deepseek-v4.1-flash`. Both reuse the current OpenCode v2 login.
-This DeepSeek entry uses Go, not the separate WorkBuddy reverse proxy.
-`--model` accepts either alias, an exact Go model ID, or `opencode-go/MODEL_ID`.
-It never silently routes to another provider. Use global `--config /absolute/agents.json`
-before the command for a custom configuration.
+model aliases, and the default concurrency limit. First-run setup asks for a
+provider and model IDs; it does not silently pick Muse, DeepSeek or a paid API.
+For a compatible endpoint, give its base URL (normally ending in `/v1`), a model
+ID, context/output limits, and one of `apiKeyEnv`, `apiKeyFile`, or local-only
+`apiKeyNone: true`. No key value belongs in this JSON. Use `setup` in a Terminal
+or supply the chosen non-secret settings through Codex; non-interactive first
+use returns `setupRequired` and creates no job. Existing Go configs remain valid.
+An optional secondary model serves explorer/quick. More endpoint/model aliases
+can be added to `models` and assigned individually in `agents`.
+`--model` accepts a configured alias or raw model ID on the role's existing
+provider. It never silently changes providers. Use global `--config /absolute/agents.json`
+before the command for another configuration. The Go model IDs in
+`examples/opencode-go.json` are explicit test examples, not defaults.
 
-Presets: `fixer`, `designer`, `librarian`, and `reviewer` use Muse;
-`explorer` and `quick` use DeepSeek. Change these mappings in the JSON file.
+Presets retain their tool sets and instructions; model mappings are user-selected in the JSON file.
 `agents` returns a compact Pi-only directory; `agents --full` includes role prompts.
 Pi presets and GPT native Codex roles are independent configurations. This bridge
 does not generate, import or synchronize native GPT role files. The parent selects
@@ -89,6 +98,22 @@ nested projects. Jobs that exceed the limit are rejected, not held in a schedule
 current pending work to finish. Both require a running session; use `resume`
 after it ends. `send --id STRING` allows retrying the same command ID without
 reapplying it while that worker is alive. Do not carry that ID to a different run.
+
+## Asynchronous completion handoff
+
+A `queue` submission is not an immediate steer into a running Codex turn.
+Dispatch independent work, finish the parent's independent work, then **end the
+current turn** when the remaining work depends on a worker. The worker's enabled
+queue callback can then wake the idle parent for acceptance and continuation.
+Do not keep the turn active with waits, polling or filler reasoning. A commentary
+message is not a turn yield. Verify that outstanding jobs have notifications
+enabled and are bound to this chat before yielding. Yielding is not task completion.
+
+While doing independent work, `inbox` provides a local check for pending results.
+`wait JOB_ID... --timeout 30` remains available for bounded diagnostics (maximum
+60 seconds), but is not the default orchestration loop. Both commands surface
+failed/cancelled results, filter by source thread, and suppress runs after `ack`.
+Waiting does not cancel jobs. No host-level immediate interruption is claimed.
 
 ## Persistent state
 
@@ -134,7 +159,7 @@ delivery may already have occurred. This is not an exactly-once transport claim.
 
 ## Verification
 
-`python3 verify.py` exercises real Muse project tools, AGENTS context, external
+`python3 verify.py` explicitly selects the Go example configuration and exercises real Muse project tools, AGENTS context, external
 steering, queued follow-up, disk-session restoration, cancellation of a running
 shell, parallel jobs in separate directories, worker failure and supervisor
 recovery. It uses disposable fixtures and suppresses real chat notifications.

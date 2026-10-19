@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "defaults": { "agent": "fixer", "maxWorkers": 20 },
+  "models": {
+    "muse": { "provider": "opencode-go", "model": "muse-spark-1.3-contributor" },
+    "deepseek": { "provider": "opencode-go", "model": "deepseek-v4.1-flash" }
+  },
+  "agents": {
+    "fixer": {
+      "description": "Scoped implementation and fixes; default worker.",
+      "model": "muse",
+      "tools": ["read", "write", "edit", "bash", "grep", "find", "ls"],
+      "prompt": "Implement the supplied task with the smallest sufficient change. Preserve unrelated work. Run the assigned checks and report changed paths, actual results and blockers. Do not redesign outside scope."
+    },
+    "explorer": {
+      "description": "Read-only code search, dependency mapping and evidence gathering.",
+      "model": "deepseek",
+      "tools": ["read", "grep", "find", "ls"],
+      "prompt": "Act as a read-only codebase scout. Locate relevant files, symbols and call paths. Return exact paths and evidence. Do not modify files. Do not claim access to a shell, browser or web search."
+    },
+    "librarian": {
+      "description": "Read-only analysis of supplied local documentation and papers.",
+      "model": "muse",
+      "tools": ["read", "grep", "find", "ls"],
+      "prompt": "Extract evidence from the supplied local documents. Cite file paths and relevant sections. Distinguish source statements from inference. You have no web-search or browser tool; request missing sources from the Codex parent. Do not edit files."
+    },
+    "designer": {
+      "description": "Scoped UI implementation using supplied design and assets.",
+      "model": "muse",
+      "tools": ["read", "write", "edit", "bash", "grep", "find", "ls"],
+      "prompt": "Implement the assigned UI scope, preserving the accepted design and existing conventions. Use supplied assets. Run relevant checks. Ask the parent for browser or visual inspection when required; do not claim to have tools you lack."
+    },
+    "reviewer": {
+      "description": "Read-only focused review of supplied changes and evidence.",
+      "model": "muse",
+      "tools": ["read", "grep", "find", "ls"],
+      "prompt": "Review the assigned files and supplied validation evidence without editing or running commands. Report concrete issues with file references and impact. Distinguish confirmed defects from questions; do not invent verification."
+    },
+    "quick": {
+      "description": "Mechanical extraction, formatting and narrowly specified edits.",
+      "model": "deepseek",
+      "tools": ["read", "write", "edit", "grep", "find", "ls"],
+      "prompt": "Follow the supplied mechanical rules exactly for extraction, formatting or small repetitive edits. Stay within the named files. Escalate ambiguity, architecture and scientific interpretation to the parent rather than guessing."
+    }
+  }
+}

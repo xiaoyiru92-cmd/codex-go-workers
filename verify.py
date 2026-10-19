@@ -32,7 +32,7 @@ def save():
 
 
 def cli(*args, allow_error=False, env=None):
-    result = subprocess.run([sys.executable, str(HERE / 'pi.py'), '--state-dir', str(STORE), *map(str, args)],
+    result = subprocess.run([sys.executable, str(HERE / 'pi.py'), '--config', str(HERE / 'examples/opencode-go.json'), '--state-dir', str(STORE), *map(str, args)],
                             capture_output=True, text=True, timeout=45, env=env)
     data = json.loads(result.stdout)
     if result.returncode and not allow_error:
@@ -61,7 +61,7 @@ def wait(job, condition, timeout=110):
         state = cli('status', job)
         if condition(state):
             return state
-        if state['status'] in {'failed', 'timed_out', 'interrupted'}:
+        if state['status'] in {'completed', 'cancelled', 'failed', 'timed_out', 'interrupted'}:
             raise RuntimeError({'job': job, 'state': state, 'result': cli('result', job)})
         time.sleep(0.25)
     raise RuntimeError('Validation wait timed out: ' + job)
@@ -81,6 +81,22 @@ def load(path):
     return json.loads(Path(path).read_text())
 
 
+def saw_tool_start(state, tool):
+    # progress.json is only the last event. Parallel tool completions can
+    # overwrite a long-running bash start before the next status poll.
+    events = Path(state['runDirectory']) / 'events.jsonl'
+    if not events.exists():
+        return False
+    for line in events.read_text().splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get('type') == 'tool_execution_start' and event.get('tool') == tool:
+            return True
+    return False
+
+
 try:
     if '--lifecycle' not in sys.argv:
         cwd = fixture('normal')
@@ -92,7 +108,7 @@ try:
                   'Before any edit, run exactly the shell command sleep 12 using bash and wait for it to finish. '
                   'Then fix calc.py, run python3 check_calc.py, and write result.txt containing initial. Report the checks.')
         job = start(cwd, prompt)
-        wait(job, lambda s: s.get('progress', {}).get('type') == 'tool_execution_start' and s['progress'].get('tool') == 'bash')
+        wait(job, lambda s: saw_tool_start(s, 'bash'))
         steer = cli('send', job, '--text', 'Change the required contents of result.txt to steered instead of initial. Keep the code fix and Python check.')
         follow = cli('send', job, '--mode', 'followUp', '--text', 'After completing the main task, append a new line FOLLOWUP_OK to result.txt.')
         assert steer['disposition'] == follow['disposition'] == 'queued'
@@ -158,7 +174,7 @@ try:
 
     cwd = fixture('recover')
     job = start(cwd, 'First run bash command sleep 60 and wait. Then reply RECOVERY_OK.')
-    state = wait(job, lambda s: (Path(s['runDirectory']) / 'session.json').exists() and s.get('progress', {}).get('tool') == 'bash')
+    state = wait(job, lambda s: (Path(s['runDirectory']) / 'session.json').exists() and saw_tool_start(s, 'bash'))
     os.kill(state['supervisorPid'], signal.SIGKILL)
     time.sleep(0.1)
     recovered = cli('recover', job)

@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 
 HERE = Path(__file__).resolve().parent
-RUNTIME = ('pi.py', 'presets.py', 'worker.mjs', 'opencode.mjs', 'agents.json',
+RUNTIME = ('pi.py', 'presets.py', 'setup_config.py', 'handoff.py', 'worker.mjs', 'connection.mjs', 'opencode.mjs', 'agents.json',
            'package.json', 'package-lock.json')
 
 
@@ -38,7 +38,8 @@ def main():
             parser.error('Target appeared during installation; refusing to replace it')
         staged.rename(target)
     print(json.dumps({'installed': str(target), 'dependenciesInstalled': not args.skip_deps,
-                      'entryPoint': str(target / 'scripts/pi.py')}, ensure_ascii=False))
+                      'entryPoint': str(target / 'scripts/pi.py'), 'setupRequired': True,
+                      'nextStep': 'Run python3 ' + str(target / 'scripts/pi.py') + ' setup to choose your API and models'}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

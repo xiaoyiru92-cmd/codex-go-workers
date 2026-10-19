@@ -1,6 +1,6 @@
 interface:
-  display_name: "Codex Go Workers"
-  short_description: "Codex-only concurrent Muse and DeepSeek workers via Pi"
-  default_prompt: "Use $codex-pi-subagents to delegate independent subtasks to Go workers concurrently, then verify their results in Codex."
+  display_name: "Codex Pi Workers"
+  short_description: "User-chosen API workers with asynchronous turn handoff"
+  default_prompt: "Use $codex-pi-subagents to confirm the configured API/models, delegate independent tasks, and finish independent work, yield the turn when awaiting workers, and resume acceptance from their queued callbacks."
 policy:
   allow_implicit_invocation: true

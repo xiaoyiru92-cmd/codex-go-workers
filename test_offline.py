@@ -14,7 +14,7 @@ HERE = Path(__file__).resolve().parent
 
 class OfflineChecks(unittest.TestCase):
     def cli(self, *args):
-        p = subprocess.run([sys.executable, str(HERE / 'pi.py'), *args], capture_output=True, text=True, check=True)
+        p = subprocess.run([sys.executable, str(HERE / 'pi.py'), '--config', str(HERE / 'examples/opencode-go.json'), *args], capture_output=True, text=True, check=True)
         return json.loads(p.stdout)
 
     def test_directory_excludes_prompts(self):
@@ -24,12 +24,12 @@ class OfflineChecks(unittest.TestCase):
         self.assertTrue(all(a['prompt'] for a in full.values()))
 
     def test_readonly_role_cannot_add_shell(self):
-        config = load_config(HERE / 'agents.json')
+        config = load_config(HERE / 'examples/opencode-go.json')
         with self.assertRaises(ValueError):
             resolve(config, 'explorer', tools='read,bash')
 
     def test_model_selection(self):
-        config = load_config(HERE / 'agents.json')
+        config = load_config(HERE / 'examples/opencode-go.json')
         self.assertEqual(resolve(config, 'fixer')['model'], 'muse-spark-1.3-contributor')
         self.assertEqual(resolve(config, 'quick')['model'], 'deepseek-v4.1-flash')
         with self.assertRaises(ValueError):
@@ -55,6 +55,27 @@ class OfflineChecks(unittest.TestCase):
                            env=env, capture_output=True, text=True)
         self.assertEqual(p.returncode, 2)
         self.assertIn('Codex-only', p.stdout)
+
+    def test_first_run_requires_explicit_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run([sys.executable, str(HERE / 'pi.py'), '--state-dir', temporary,
+                'start', '--cwd', temporary, '--prompt', 'Must not run', '--no-notify'],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertTrue(json.loads(result.stdout)['setupRequired'])
+            self.assertFalse((Path(temporary) / 'jobs').exists())
+
+    def test_installed_setup_is_available_outside_codex(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / 'installed'
+            subprocess.run([sys.executable, str(HERE / 'install.py'), '--target', str(target), '--skip-deps'], check=True, capture_output=True)
+            env = dict(os.environ)
+            env.pop('CODEX_THREAD_ID', None)
+            result = subprocess.run([sys.executable, str(target / 'scripts/pi.py'), 'setup'],
+                env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertTrue(json.loads(result.stdout)['setupRequired'])
+            self.assertNotIn('Codex-only', result.stdout)
 
 
 if __name__ == '__main__':

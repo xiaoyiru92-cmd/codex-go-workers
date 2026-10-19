@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import datetime as dt
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -62,7 +63,7 @@ def job_path(store, job_id):
 
 
 def run_path(job, number=None):
-    number = number or read(job / 'job.json')['currentRun']
+    number = read(job / 'job.json')['currentRun'] if number is None else number
     if not isinstance(number, int) or number < 1:
         raise ValueError('Invalid run number')
     result = job / 'runs' / f'{number:04d}'
@@ -164,12 +165,17 @@ def notify(run, retry=False):
         return notification
 
 
-def clean_environment():
+def clean_environment(request=None):
     allowed = {'HOME', 'USER', 'LOGNAME', 'PATH', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR',
                'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy',
                'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS',
                'OPENCODE_V2_SERVER', 'OPENCODE_V2_CLI'}
-    return {k: v for k, v in os.environ.items() if k in allowed}
+    environment = {k: v for k, v in os.environ.items() if k in allowed}
+    if request and request.get('provider') == 'openai-compatible':
+        key_name = request.get('modelConfig', {}).get('apiKeyEnv')
+        if key_name and key_name in os.environ:
+            environment[key_name] = os.environ[key_name]
+    return environment
 
 
 def terminate_tree(child):
@@ -203,7 +209,7 @@ def supervise(run):
     reason = None
     try:
         child = subprocess.Popen([shutil.which('node') or '/opt/homebrew/bin/node', str(HERE / 'worker.mjs'), str(run)],
-                                 cwd=request['cwd'], env=clean_environment(), stdout=subprocess.PIPE,
+                                 cwd=request['cwd'], env=clean_environment(request), stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, start_new_session=True)
         state['workerPid'] = child.pid
         write(run / 'state.json', state)
@@ -234,9 +240,18 @@ def supervise(run):
                         log.flush()
                     else:
                         selector.unregister(key.fileobj)
-            remainder = child.stdout.read()
-            if remainder:
+            # Descendants can inherit this pipe and outlive the worker. Drain
+            # buffered bytes without waiting for their EOF (or new output).
+            os.set_blocking(child.stdout.fileno(), False)
+            for _ in range(16):
+                try:
+                    remainder = os.read(child.stdout.fileno(), 65536)
+                except BlockingIOError:
+                    break
+                if not remainder:
+                    break
                 log.write(remainder)
+        child.stdout.close()
         selector.close()
         code = child.wait()
         result = read(run / 'result.json')
@@ -265,13 +280,14 @@ def supervise(run):
 
 
 def launch(store, args, resume=False):
+    if args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
+        raise ValueError('Timeout must be finite and positive')
     prompt = args.prompt if args.prompt is not None else Path(args.prompt_file).read_text()
     if not prompt.strip():
         raise ValueError('Task prompt is empty')
-    config = load_config(args.config)
-    max_workers = args.max_workers if args.max_workers is not None else config['defaults']['maxWorkers']
-    if max_workers < 1:
-        raise ValueError('Worker limit must be positive')
+    # Resume uses the saved run snapshot, even if the live configuration was
+    # removed, replaced, or reset for a different provider.
+    config = None if resume else load_config(args.config)
     preset = None if resume else resolve(config, args.agent, args.model, args.tools, args.thinking)
     with lock(store / 'registry.lock'):
         if resume:
@@ -293,6 +309,10 @@ def launch(store, args, resume=False):
                     'configSource': str(Path(args.config).expanduser().resolve()), 'maxRequests': args.max_requests,
                     'maxOutputTokens': args.max_output_tokens, 'timeoutSeconds': args.timeout,
                     'notify': True, 'sessionFile': None}
+        default_limit = spec.get('workerLimit', 20) if resume else config['defaults']['maxWorkers']
+        max_workers = args.max_workers if args.max_workers is not None else default_limit
+        if type(max_workers) is not int or max_workers < 1:
+            raise ValueError('Worker limit must be a positive integer')
         for file in (store / 'jobs').glob('pi_*/job.json'):
             other = file.parent
             other_run = run_path(other)
@@ -317,7 +337,9 @@ def launch(store, args, resume=False):
             raise ValueError('Notification requires a source thread UUID, or use --no-notify')
         if args.timeout is not None:
             spec['timeoutSeconds'] = args.timeout
-        if spec['timeoutSeconds'] <= 0 or spec['maxRequests'] <= 0 or spec['maxOutputTokens'] <= 0:
+        if not math.isfinite(spec['timeoutSeconds']) or spec['timeoutSeconds'] <= 0:
+            raise ValueError('Timeout must be finite and positive')
+        if spec['maxRequests'] <= 0 or spec['maxOutputTokens'] <= 0:
             raise ValueError('Limits must be positive')
         spec.update(runId=uuid.uuid4().hex, prompt=prompt, threadId=thread, store=str(store), jobDir=str(job), workerLimit=max_workers, createdAt=now())
         spec['completionInstruction'] = args.completion_instruction or spec.get('completionInstruction', '')
@@ -406,9 +428,16 @@ def parser():
     cmd.add_argument('--text', required=True)
     cmd.add_argument('--id')
     commands.add_parser('list')
+    for name in ['inbox', 'wait']:
+        cmd = commands.add_parser(name, help='Read unaccepted results directly, without waiting for queue delivery')
+        cmd.add_argument('jobs', nargs='*')
+        cmd.add_argument('--thread', default=os.environ.get('CODEX_THREAD_ID'))
+        if name == 'wait':
+            cmd.add_argument('--timeout', type=float, default=30, help='Wait at most 0–60 seconds; never cancels a job')
     agents = commands.add_parser('agents')
     agents.add_argument('--full', action='store_true', help='Include complete Pi role prompts; default is a compact directory')
     commands.add_parser('models')
+    commands.add_parser('setup', help='Choose API provider, models and credential source interactively; no model calls')
     cmd = commands.add_parser('recover')
     cmd.add_argument('job', nargs='?')
     cmd = commands.add_parser('_supervise')
@@ -422,14 +451,33 @@ def main():
     if args.command == '_supervise':
         supervise(Path(args.run_directory))
         return
+    if args.command == 'setup' or (args.command in {'start', 'agents', 'models'} and
+            read(Path(args.config).expanduser(), {}).get('setupRequired') is True):
+        if not sys.stdin.isatty():
+            print(json.dumps({'setupRequired': True,
+                'error': 'Choose an API provider and models first. Run setup in a Terminal, or ask Codex to configure your chosen non-secret settings.',
+                'choices': ['OpenAI-compatible API (Chat Completions)', 'OpenCode Go'],
+                'setupCommand': shlex.join([sys.executable, str(HERE / 'pi.py'), '--config', args.config, 'setup'])}))
+            sys.exit(2)
+        from setup_config import configure
+        configure(Path(args.config).expanduser())
+        if args.command == 'setup':
+            print(json.dumps({'configured': True, 'config': str(Path(args.config).expanduser()), 'modelCalls': 0}))
+            return
     if args.command in {'agents', 'models'}:
         config = load_config(args.config)
         result = config[args.command]
         if args.command == 'agents' and not args.full:
-            result = {name: {key: agent[key] for key in ('description', 'model', 'tools')}
+            result = {name: {key: agent.get(key, '') for key in ('description', 'model', 'tools')}
                       for name, agent in result.items()}
     elif args.command in {'start', 'resume'}:
         result = launch(store, args, args.command == 'resume')
+    elif args.command in {'inbox', 'wait'}:
+        from handoff import inbox, wait_for_results
+        options = {'job_ids': args.jobs or None}
+        if args.command == 'wait':
+            options['timeout'] = args.timeout
+        result = (inbox if args.command == 'inbox' else wait_for_results)(store, args.thread, **options)
     elif args.command == 'list':
         result = [current_status(p.parent) for p in (store / 'jobs').glob('pi_*/job.json')]
     elif args.command == 'recover':

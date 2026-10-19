@@ -8,7 +8,9 @@ import subprocess
 import sys
 
 thread = os.environ.get('CODEX_THREAD_ID', '')
-if not re.fullmatch(r'[0-9a-f-]{36}', thread):
+# Offline setup may be run in a normal Terminal. It cannot launch a worker.
+setup_only = sys.argv[1:] == ['setup']
+if not setup_only and not re.fullmatch(r'[0-9a-f-]{36}', thread):
     print(json.dumps({'error': 'Codex-only skill: no host CODEX_THREAD_ID. OpenCode/OMO/Pi must skip this skill and retain their original workflow. Do not fabricate a thread ID.'}))
     sys.exit(2)
 
@@ -24,7 +26,7 @@ try:
     while ancestor in processes and ancestor not in visited:
         visited.add(ancestor)
         ancestor, name = processes[ancestor]
-        if name in {'opencode', 'opencode-cli'}:
+        if not setup_only and name in {'opencode', 'opencode-cli'}:
             raise ValueError('OpenCode ancestor detected; even inherited CODEX_THREAD_ID does not authorize this skill')
 except (OSError, ValueError, subprocess.SubprocessError):
     print(json.dumps({'error': 'Codex-only skill: OpenCode caller detected or caller inspection unavailable. Skip this skill and keep the OpenCode/OMO workflow unchanged.'}))
